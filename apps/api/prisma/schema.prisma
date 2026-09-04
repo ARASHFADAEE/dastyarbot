@@ -1,0 +1,232 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String          @id @default(cuid())
+  email         String          @unique
+  passwordHash  String
+  name          String
+  role          String          @default("agent")
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  handoffs      HandoffTicket[] @relation("AssignedHandoffs")
+  agentMessages Message[]       @relation("AgentMessages")
+  notifications Notification[]
+}
+
+model Customer {
+  id            String            @id @default(cuid())
+  name          String?
+  phone         String?
+  email         String?
+  notes         String?
+  metadata      String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  channels      CustomerChannel[]
+  conversations Conversation[]
+  leads         Lead[]
+  callbacks     CallbackRequest[]
+}
+
+model CustomerChannel {
+  id         String   @id @default(cuid())
+  customerId String
+  channel    String
+  externalId String
+  createdAt  DateTime @default(now())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([channel, externalId])
+  @@index([customerId])
+}
+
+model Conversation {
+  id            String            @id @default(cuid())
+  customerId    String
+  channel       String
+  status        String            @default("active")
+  aiEnabled     Boolean           @default(true)
+  title         String?
+  startedAt     DateTime          @default(now())
+  closedAt      DateTime?
+  lastMessageAt DateTime          @default(now())
+  messageCount  Int               @default(0)
+  resolvedByAi  Boolean           @default(false)
+  converted     Boolean           @default(false)
+  customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  messages      Message[]
+  leads         Lead[]
+  callbacks     CallbackRequest[]
+  handoffs      HandoffTicket[]
+  usageLogs     AiUsageLog[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([lastMessageAt])
+}
+
+model Message {
+  id              String       @id @default(cuid())
+  conversationId  String
+  role            String
+  content         String
+  channel         String
+  mediaUrl        String?
+  mediaType       String?
+  toolName        String?
+  toolPayload     String?
+  tokensIn        Int?
+  tokensOut       Int?
+  costUsd         Float?
+  avalaiRequestId String?
+  responseTimeMs  Int?
+  agentId         String?
+  createdAt       DateTime     @default(now())
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  agent           User?        @relation("AgentMessages", fields: [agentId], references: [id])
+
+  @@index([conversationId, createdAt])
+}
+
+model Product {
+  id          String         @id @default(cuid())
+  sku         String         @unique
+  name        String
+  description String?
+  category    String?
+  isActive    Boolean        @default(true)
+  metadata    String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  prices      ProductPrice[]
+
+  @@index([name])
+  @@index([category])
+}
+
+model ProductPrice {
+  id        String    @id @default(cuid())
+  productId String
+  amount    Float
+  currency  String    @default("IRR")
+  label     String?
+  validFrom DateTime  @default(now())
+  validTo   DateTime?
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+model KnowledgeDocument {
+  id        String           @id @default(cuid())
+  title     String
+  source    String?
+  content   String
+  isActive  Boolean          @default(true)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  chunks    KnowledgeChunk[]
+}
+
+model KnowledgeChunk {
+  id         String            @id @default(cuid())
+  documentId String
+  content    String
+  chunkIndex Int
+  embedding  String?
+  document   KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+}
+
+model Lead {
+  id              String        @id @default(cuid())
+  customerId      String
+  conversationId  String?
+  status          String        @default("new")
+  score           Int           @default(0)
+  intent          String?
+  summary         String?
+  productInterest String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@index([status, score])
+  @@index([customerId])
+}
+
+model CallbackRequest {
+  id             String        @id @default(cuid())
+  customerId     String
+  conversationId String?
+  phone          String
+  preferredTime  String?
+  notes          String?
+  status         String        @default("pending")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  customer       Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+}
+
+model HandoffTicket {
+  id             String       @id @default(cuid())
+  conversationId String
+  reason         String?
+  status         String       @default("open")
+  assignedToId   String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  resolvedAt     DateTime?
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  assignedTo     User?        @relation("AssignedHandoffs", fields: [assignedToId], references: [id])
+
+  @@index([status])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String?
+  title     String
+  body      String
+  type      String
+  payload   String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, isRead])
+}
+
+model AiUsageLog {
+  id              String        @id @default(cuid())
+  conversationId  String?
+  model           String
+  operation       String
+  tokensIn        Int           @default(0)
+  tokensOut       Int           @default(0)
+  costUsd         Float         @default(0)
+  avalaiRequestId String?
+  createdAt       DateTime      @default(now())
+  conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+}
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}

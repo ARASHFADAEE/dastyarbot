@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <title>Demo Web Chat Widget</title>
+    <style>
+      body {
+        font-family: Tahoma, sans-serif;
+        margin: 0;
+        min-height: 100vh;
+        background: linear-gradient(160deg, #eef6f3, #f7f1ea);
+        display: grid;
+        place-items: center;
+      }
+      .hero {
+        text-align: center;
+        max-width: 520px;
+        padding: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="hero">
+      <h1>فروشگاه نمونه</h1>
+      <p>ویجت چت را از گوشه صفحه باز کنید و سوال بپرسید.</p>
+    </div>
+    <script
+      src="http://localhost:3001/widget/chat-widget.js"
+      data-api="http://localhost:3001"
+      data-title="پشتیبانی فروش"
+      defer
+    ></script>
+  </body>
+</html>

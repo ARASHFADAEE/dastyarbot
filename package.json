@@ -1,0 +1,20 @@
+{
+  "name": "avalai-sales-crm-bot",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w @bot/api",
+    "dev:admin": "npm run dev -w @bot/admin",
+    "build": "npm run build -w @bot/shared && npm run build -w @bot/api && npm run build -w @bot/admin && npm run build -w @bot/widget",
+    "test": "npm run test -w @bot/api",
+    "db:generate": "npm run prisma:generate -w @bot/api",
+    "db:migrate": "npm run prisma:migrate -w @bot/api",
+    "db:seed": "npm run prisma:seed -w @bot/api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
