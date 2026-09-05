@@ -28,21 +28,27 @@ npm run build -w @bot/shared && npm run build -w @bot/admin
 NEXT_PUBLIC_API_URL=https://YOUR-API-HOST
 ```
 
-API را جداگانه روی VPS / Railway / Render بالا بیاورید.
+دیتابیس روی Vercel ست نمی‌شود — پنل به DB وصل نیست.  
+`DATABASE_URL` را روی **هاست API** بگذارید (نه فقط Vercel).  
+جزئیات: [env-vercel.md](./env-vercel.md)
 
 ---
 
 ## Database
 
-Local default uses **SQLite** (`file:./dev.db`) so the stack runs without Docker.
-
-For production Postgres (recommended), set:
+Production: **PostgreSQL** (مثلاً Prisma Postgres).
 
 ```
-DATABASE_URL="postgresql://bot:bot@localhost:5432/bot?schema=public"
+DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/postgres?sslmode=require"
 ```
 
-and run `docker compose up -d` when Docker is available, then switch Prisma provider back to `postgresql` if you need pgvector.
+سپس روی API:
+
+```bash
+cd apps/api && npx prisma db push && npm run prisma:seed
+```
+
+Local بدون Postgres هنوز می‌تواند موقتاً SQLite باشد، ولی schema فعلی روی `postgresql` است.
 
 ## Environment
 
