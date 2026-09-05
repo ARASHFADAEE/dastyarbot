@@ -4,9 +4,11 @@ import { Telegraf, Context } from 'telegraf';
 import { ConversationEngineService } from '../conversation-engine/conversation-engine.service';
 import { ConversationsService } from '../conversations/conversations.service';
 import { HandoffService } from '../handoff/handoff.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { formatTelegramHtml } from '../ai/telegram-format';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import type { Update } from 'telegraf/typings/core/types/typegram';
 
 type BusinessConnection = {
   id: string;
@@ -43,9 +45,26 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly engine: ConversationEngineService,
     private readonly conversations: ConversationsService,
+    private readonly prisma: PrismaService,
     @Inject(forwardRef(() => HandoffService))
     private readonly handoff: HandoffService,
   ) {}
+
+  private get isWebhookMode(): boolean {
+    return (
+      Boolean(process.env.VERCEL) ||
+      (this.config.get<string>('TELEGRAM_MODE') || '').toLowerCase() === 'webhook'
+    );
+  }
+
+  /** Public entry for Vercel / webhook controller. */
+  async handleUpdate(update: unknown) {
+    if (!this.bot) {
+      this.logger.warn('Telegram bot not ready — dropping update');
+      return;
+    }
+    await this.bot.handleUpdate(update as Update);
+  }
 
   async onModuleInit() {
     const token = (this.config.get<string>('TELEGRAM_BOT_TOKEN') || '').trim();
@@ -54,8 +73,10 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    this.loadBusinessMap();
-    this.logger.log('Starting Telegram bot (long polling + Business Mode)...');
+    await this.loadBusinessMap();
+    this.logger.log(
+      `Starting Telegram bot (${this.isWebhookMode ? 'webhook' : 'long polling'} + Business Mode)...`,
+    );
     this.bot = new Telegraf(token);
 
     this.bot.start(async (ctx) => {
@@ -121,7 +142,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
           if (connId === bc.id) this.businessByChat.delete(chatId);
         }
       }
-      this.saveBusinessMap();
+      void this.saveBusinessMap();
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -144,7 +165,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         const connectionId = msg.business_connection_id;
         if (connectionId) {
           this.businessByChat.set(msg.chat.id, connectionId);
-          this.saveBusinessMap();
+          void this.saveBusinessMap();
         }
 
         const voiceFileId =
@@ -173,18 +194,41 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     try {
       const me = await this.bot.telegram.getMe();
       this.logger.log(`Telegram identity ok: @${me.username}`);
+
+      const allowedUpdates = [
+        'message',
+        'edited_message',
+        'callback_query',
+        'business_connection',
+        'business_message',
+        'edited_business_message',
+      ] as const;
+
+      if (this.isWebhookMode) {
+        const base =
+          (this.config.get<string>('API_PUBLIC_URL') || '').replace(/\/$/, '') ||
+          (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
+        if (!base) {
+          this.logger.error('API_PUBLIC_URL / VERCEL_URL missing — cannot set webhook');
+          return;
+        }
+        const webhookUrl = `${base}/api/telegram/webhook`;
+        const secret = (this.config.get<string>('TELEGRAM_WEBHOOK_SECRET') || '').trim();
+        await this.bot.telegram.setWebhook(webhookUrl, {
+          secret_token: secret || undefined,
+          allowed_updates: [...allowedUpdates] as never,
+          drop_pending_updates: true,
+        });
+        this.logger.log(`Telegram webhook set: ${webhookUrl}`);
+        return;
+      }
+
+      await this.bot.telegram.deleteWebhook({ drop_pending_updates: true }).catch(() => undefined);
       void this.bot
         .launch(
           {
             dropPendingUpdates: true,
-            allowedUpdates: [
-              'message',
-              'edited_message',
-              'callback_query',
-              'business_connection',
-              'business_message',
-              'edited_business_message',
-            ] as never,
+            allowedUpdates: [...allowedUpdates] as never,
           },
           () => {
             this.logger.log(
@@ -202,7 +246,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy() {
-    if (this.bot) this.bot.stop('shutdown');
+    if (this.bot && !this.isWebhookMode) this.bot.stop('shutdown');
   }
 
   /**
@@ -513,29 +557,59 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private loadBusinessMap() {
+  private async loadBusinessMap() {
+    try {
+      const row = await this.prisma.setting.findUnique({
+        where: { key: 'telegram_business_map' },
+      });
+      if (row?.value) {
+        const raw = JSON.parse(row.value) as Record<string, string>;
+        for (const [chatId, connId] of Object.entries(raw)) {
+          this.businessByChat.set(Number(chatId), connId);
+        }
+        this.logger.log(`Loaded ${this.businessByChat.size} business chat mappings (db)`);
+        return;
+      }
+    } catch (err) {
+      this.logger.warn(`DB business map load failed: ${(err as Error).message}`);
+    }
+
     try {
       if (!existsSync(this.connectionsPath)) return;
       const raw = JSON.parse(readFileSync(this.connectionsPath, 'utf8')) as Record<string, string>;
       for (const [chatId, connId] of Object.entries(raw)) {
         this.businessByChat.set(Number(chatId), connId);
       }
-      this.logger.log(`Loaded ${this.businessByChat.size} business chat mappings`);
+      this.logger.log(`Loaded ${this.businessByChat.size} business chat mappings (file)`);
     } catch {
       // ignore
     }
   }
 
-  private saveBusinessMap() {
+  private async saveBusinessMap() {
+    const obj: Record<string, string> = {};
+    for (const [chatId, connId] of this.businessByChat.entries()) {
+      obj[String(chatId)] = connId;
+    }
+    const value = JSON.stringify(obj);
+
+    try {
+      await this.prisma.setting.upsert({
+        where: { key: 'telegram_business_map' },
+        create: { key: 'telegram_business_map', value },
+        update: { value },
+      });
+    } catch (err) {
+      this.logger.warn(`DB business map save failed: ${(err as Error).message}`);
+    }
+
+    if (process.env.VERCEL) return;
+
     try {
       mkdirSync(join(process.cwd(), 'data'), { recursive: true });
-      const obj: Record<string, string> = {};
-      for (const [chatId, connId] of this.businessByChat.entries()) {
-        obj[String(chatId)] = connId;
-      }
       writeFileSync(this.connectionsPath, JSON.stringify(obj, null, 2));
     } catch (err) {
-      this.logger.warn(`Could not persist business map: ${(err as Error).message}`);
+      this.logger.warn(`Could not persist business map file: ${(err as Error).message}`);
     }
   }
 }
