@@ -30,7 +30,7 @@ NEXT_PUBLIC_API_URL=https://YOUR-API-HOST
 
 دیتابیس روی Vercel ست نمی‌شود — پنل به DB وصل نیست.  
 `DATABASE_URL` را روی **هاست API** بگذارید (نه فقط Vercel).  
-جزئیات: [env-vercel.md](./env-vercel.md)
+جزئیات کامل: [env.md](./env.md)
 
 ---
 
